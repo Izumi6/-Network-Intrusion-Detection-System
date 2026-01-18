@@ -1,0 +1,117 @@
+
+The NSL‑KDD dataset link and description follow the official hosting site.[4][5]
+
+***
+
+## nids_train.py (training + evaluation script)
+
+This version assumes you have `data/KDDTrain+.csv` and `data/KDDTest+.csv` with the standard NSL‑KDD columns. Many public repos use similar preprocessing and Random Forest baselines.[3][4][1]
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.model_selection import train_test_split
+from joblib import dump
+import os
+
+TRAIN_PATH = "data/KDDTrain+.csv"
+TEST_PATH = "data/KDDTest+.csv"
+
+# Label mapping: normal vs attack (binary classification)
+def map_label(label: str) -> str:
+    return "normal" if label == "normal" else "attack"
+
+def load_data(path: str) -> pd.DataFrame:
+    # NSL-KDD CSVs often have no header; add standard NSL-KDD column names if needed.
+    # Here we assume files already have headers. If not, you must set column names explicitly.
+    df = pd.read_csv(path)
+    return df
+
+def prepare_xy(df: pd.DataFrame):
+    # Last column is usually the label in many prepared NSL-KDD CSVs
+    # Adjust if your dataset uses a different label column name.
+    if "label" in df.columns:
+        y_raw = df["label"]
+        X = df.drop(columns=["label"])
+    else:
+        # Fallback: assume last column is label
+        y_raw = df.iloc[:, -1]
+        X = df.iloc[:, :-1]
+
+    y = y_raw.apply(map_label)
+
+    # Detect categorical vs numeric columns
+    categorical_cols = X.select_dtypes(include=["object"]).columns.tolist()
+    numeric_cols = X.select_dtypes(exclude=["object"]).columns.tolist()
+
+    return X, y, numeric_cols, categorical_cols
+
+def build_pipeline(numeric_cols, categorical_cols):
+    numeric_transformer = StandardScaler()
+    categorical_transformer = OneHotEncoder(handle_unknown="ignore")
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, numeric_cols),
+            ("cat", categorical_transformer, categorical_cols),
+        ]
+    )
+
+    clf = RandomForestClassifier(
+        n_estimators=200,
+        max_depth=None,
+        n_jobs=-1,
+        random_state=42,
+        class_weight="balanced"
+    )
+
+    model = Pipeline(
+        steps=[
+            ("preprocessor", preprocessor),
+            ("classifier", clf),
+        ]
+    )
+
+    return model
+
+def main():
+    if not os.path.exists(TRAIN_PATH):
+        raise FileNotFoundError(f"Training file not found at {TRAIN_PATH}")
+    if not os.path.exists(TEST_PATH):
+        raise FileNotFoundError(f"Test file not found at {TEST_PATH}")
+
+    print("Loading data...")
+    train_df = load_data(TRAIN_PATH)
+    test_df = load_data(TEST_PATH)
+
+    print("Preparing features and labels...")
+    X_train, y_train, num_cols_train, cat_cols_train = prepare_xy(train_df)
+    X_test, y_test, _, _ = prepare_xy(test_df)
+
+    print("Building pipeline...")
+    model = build_pipeline(num_cols_train, cat_cols_train)
+
+    print("Training model...")
+    model.fit(X_train, y_train)
+
+    print("Evaluating on test set...")
+    y_pred = model.predict(X_test)
+
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+    print("Classification report:")
+    print(classification_report(y_test, y_pred))
+
+    # Save full pipeline (preprocessor + classifier)
+    os.makedirs("artifacts", exist_ok=True)
+    model_path = "artifacts/nids_model.joblib"
+    dump(model, model_path)
+    print(f"Saved model to {model_path}")
+
+if __name__ == "__main__":
+    main()
